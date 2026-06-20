@@ -122,7 +122,7 @@ def read_messages(channel: Optional[str] = None, since_timestamp: Optional[str] 
     messages = [
         {"ts": m["ts"], "user": m.get("user", "unknown"), "text": m.get("text", "")}
         for m in resp["messages"]
-        if "subtype" not in m and not m.get("bot_id")
+        if "subtype" not in m 
     ]
     messages.reverse()  # Slack returns newest-first; we want chronological order
     return messages
