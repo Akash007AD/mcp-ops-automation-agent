@@ -1,0 +1,50 @@
+# ── Virtual environment ────────────────────────────────────────────────────────
+venv/
+.venv/
+env/
+
+# ── Environment & secrets ──────────────────────────────────────────────────────
+.env
+*.env
+service_account.json
+config.yaml
+
+# ── Internal planning docs (not part of the public project) ────────────────────
+01_PROJECT_OVERVIEW.md
+02_ARCHITECTURE.md
+03_BUILD_PLAN.md
+04_IDEAS_AND_NOTES.md
+05_SYSTEM_PROMPTS.md
+06_EMAIL_CONFIG.md
+
+# ── Python ────────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg-info/
+dist/
+build/
+*.egg
+.eggs/
+
+# ── Logs ──────────────────────────────────────────────────────────────────────
+*.log
+logs/
+
+# ── Local state / generated artifacts ───────────────────────────────────────────
+*.pyc
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# ── OS artifacts ──────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ── IDE ───────────────────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.suo
+*.user
