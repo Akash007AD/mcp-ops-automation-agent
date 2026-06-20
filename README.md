@@ -135,21 +135,34 @@ python -m src.orchestrators.weekly_digest
 
 ### 6. (Optional) Use the MCP servers locally
 
-To query the tracker, Slack, or email tools interactively through Claude Desktop or Claude Code, add an entry to your MCP client's config pointing at the server scripts, e.g.:
+To query the tracker, Slack, or email tools interactively through Claude Desktop or Claude Code, add the servers to your MCP client's config. On Windows, Claude Desktop's config file is at `%APPDATA%\Claude\claude_desktop_config.json`.
+
+Point `command` at the Python interpreter **inside this project's venv**, not a global `python` — Claude Desktop launches these as subprocesses without the venv activated, so a global interpreter won't have `mcp`, `slack_sdk`, `gspread`, etc. installed. Example (adjust the path to wherever you cloned the project):
 
 ```json
 {
   "mcpServers": {
     "tracker-tools": {
-      "command": "python",
-      "args": ["src/mcp_servers/tracker_server.py"],
-      "cwd": "/path/to/MCP_Automation"
+      "command": "D:\\MCP_Automation\\venv\\Scripts\\python.exe",
+      "args": ["D:\\MCP_Automation\\src\\mcp_servers\\tracker_server.py"]
+    },
+    "slack-tools": {
+      "command": "D:\\MCP_Automation\\venv\\Scripts\\python.exe",
+      "args": ["D:\\MCP_Automation\\src\\mcp_servers\\slack_server.py"]
+    },
+    "email-tools": {
+      "command": "D:\\MCP_Automation\\venv\\Scripts\\python.exe",
+      "args": ["D:\\MCP_Automation\\src\\mcp_servers\\email_server.py"]
     }
   }
 }
 ```
 
-This only works locally, on the machine where the project and its credentials are set up — see the note above.
+On macOS/Linux, point `command` at `venv/bin/python` instead, using forward slashes.
+
+No `cwd` is needed — each server script resolves the project root itself (`sys.path.insert(0, ...parents[2])`), and configuration is loaded relative to that root, so credentials in `.env`/`config.yaml` are found regardless of where the process is launched from.
+
+After saving the config, fully quit and reopen Claude Desktop (not just close the window) for it to pick up the new servers. This only works locally, on the machine where the project and its credentials are set up — see the note above.
 
 ## Testing the pipeline end to end
 
