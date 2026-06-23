@@ -1,11 +1,19 @@
 """
 MCP Server: slack-tools
 
-Wraps the Slack Web API (src/core/slack_ops.py) as MCP tools, per
-02_ARCHITECTURE.md. Read-only on Slack except for posting the agent's own
-messages — see the safety boundary documented there.
+Wraps the Slack Web API (src/core/slack_ops.py) and channel management
+(src/utils/channel_manager.py) as MCP tools.
 
-Run directly for stdio MCP (e.g. from a Claude Desktop config entry):
+Exposed tools:
+  - read_messages       — fetch messages from a channel
+  - post_message        — post a message to a channel
+  - list_channels       — list channels the bot is a member of
+  - create_channel      — create + register a new intake channel
+  - remove_channel_tool — unregister + archive a channel
+  - list_intake_channels — list channels registered in config.yaml
+  - sync_channels       — sync config.yaml membership with Slack
+
+Run directly for stdio MCP (e.g. from Claude Desktop config):
     python src/mcp_servers/slack_server.py
 """
 
@@ -19,6 +27,7 @@ from typing import Optional
 from mcp.server.fastmcp import FastMCP
 
 from src.core import slack_ops
+from src.utils.channel_manager import register_mcp_tools
 
 mcp = FastMCP("slack-tools")
 
@@ -30,7 +39,7 @@ def read_messages(
     """Fetch new messages from a Slack channel.
 
     Args:
-        channel: channel name (e.g. "requests") or ID. Defaults to the
+        channel: channel name (e.g. "new-channel") or ID. Defaults to the
             configured requests channel.
         since_timestamp: Slack 'ts' cursor — only messages after this are
             returned. Omit to get the most recent 100 messages.
@@ -40,14 +49,23 @@ def read_messages(
 
 @mcp.tool()
 def post_message(text: str, channel: Optional[str] = None) -> dict:
-    """Post a message to a Slack channel (used for summary/status posts only).
+    """Post a message to a Slack channel.
 
     Args:
         text: the message body to post.
-        channel: channel name or ID. Defaults to the configured updates
-            channel.
+        channel: channel name or ID. Defaults to the configured updates channel.
     """
     return slack_ops.post_message(text, channel)
+
+
+@mcp.tool()
+def list_channels() -> list[dict]:
+    """List all Slack channels the bot is currently a member of."""
+    return slack_ops.list_channels()
+
+
+# Register channel management tools (create, remove, list, sync)
+register_mcp_tools(mcp)
 
 
 if __name__ == "__main__":

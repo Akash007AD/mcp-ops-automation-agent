@@ -1,201 +1,243 @@
-# Inbox-to-Action — MCP Automation Agent
+# Inbox-to-Action 🤖
 
-An automation agent that watches a team's Slack channel for incoming requests, classifies each one with an LLM, logs it to a tracker, and delivers daily and weekly status summaries to Slack and email — without anyone manually scrolling Slack to write a status update.
-
-## The problem
-
-Small teams field requests scattered across Slack, email, and spreadsheets. Without a system, requests get buried in channel scroll, and someone ends up manually reading through messages every week to compile a status update — typically 30-60 minutes of pure busywork, repeated indefinitely.
-
-## What this does
-
-- **Hourly intake** — reads new messages from a Slack channel, classifies each as `bug`, `feature`, `question`, or `noise`, and logs it to a tracker (Google Sheets or Notion).
-- **Daily overview** (6 PM by default) — summarizes the day's new requests and posts the summary to Slack and email.
-- **Weekly digest** (Monday 9 AM by default) — summarizes the past 7 days, including resolution rate and recurring themes, posted to Slack and email.
-- **Urgency flagging** — requests that describe a genuine outage, active financial loss, or explicit urgency are flagged separately from routine bugs and feature requests.
-
-No custom ML model is involved. All classification and summarization is done by an LLM (Groq) with task-specific prompts.
+An MCP-powered automation agent that watches Slack channels, classifies messages using Groq (LLaMA 3.3-70B), logs them to Google Sheets (or Notion), and sends daily/weekly summaries via Slack, Email, and Telegram. Urgent items trigger an immediate Telegram alert. Also exposes standalone Notion and Google Calendar tools.
 
 ## Architecture
 
 ```
-                 Slack Workspace
-                 (#requests channel)
-                         |
-                         | new messages
-                         v
-              read_messages()  --------->  LLM classifies
-                                            (bug/feature/question/noise)
-                                                    |
-                                                    v
-                                         add_entry() -> Tracker
-                                       (Google Sheets / Notion)
-
-Trigger schedule:
-  Hourly  -> read_messages() -> classify -> add_entry()
-  Daily   -> list_open_entries(since=today) -> draft summary
-             -> post_message() + send_summary_email()
-  Weekly  -> list_open_entries(since=7d_ago) -> draft digest
-             -> post_message() + send_summary_email()
+Slack (multiple intake channels)
+      ↓
+ Hourly Intake Orchestrator
+      ↓
+ Groq LLaMA 3.3-70B  →  classify (bug / feature / question / noise) + urgent flag
+      ↓
+ Tracker (Google Sheets or Notion)  →  log entry
+      ↓                                    ↓ (if urgent)
+ Daily / Weekly Orchestrator          Telegram alert (immediate)
+      ↓
+ Slack post  +  Email (SMTP)  +  Telegram
 ```
 
-### Components
+## MCP Servers
 
-| Component | Responsibility |
+**Recommended: run everything through the unified server.**
+
+| Server | Tools |
 |---|---|
-| `src/core/slack_ops.py` | Slack Web API wrapper — read-only except for posting the agent's own summaries |
-| `src/core/tracker.py` | Tracker abstraction with two interchangeable backends (Google Sheets, Notion) |
-| `src/core/llm_ops.py` | Groq client + the classification, daily, and weekly prompts |
-| `src/core/email_ops.py` | Resend wrapper for outbound summary emails |
-| `src/orchestrators/*.py` | The three scheduled jobs (hourly intake, daily overview, weekly digest) |
-| `scheduler.py` | Wires the three jobs to their trigger schedule and runs continuously |
-| `src/mcp_servers/*.py` | The same tracker, Slack, and email operations exposed as MCP tools — see below |
+| `mcp-automation` (unified — `unified_server.py`) | Slack: `read_messages`, `post_message`, `list_channels` · Tracker: `add_entry`, `list_open_entries`, `update_status` · Email: `send_summary_email` · Notion: `notion_create_page`, `notion_query_database`, `notion_update_page` · Calendar: `calendar_create_event`, `calendar_list_events` · Telegram: `telegram_send_message`, `telegram_send_to_group` |
 
-### Safety boundaries
+The three single-purpose servers below still work standalone if you'd rather run a smaller process per integration:
 
-- The agent is read-only on Slack except for posting its own summary messages. It never edits or deletes other users' messages and never auto-replies to a requester.
-- The agent writes to exactly one tracker database, configured at setup time.
-- Email recipients are defined in a static `config.yaml`. The agent cannot discover or add new recipients on its own.
-
-## A note on the MCP servers
-
-This project includes three MCP servers (`src/mcp_servers/`) that expose the tracker, Slack, and email operations as tools for an MCP client such as Claude Desktop or Claude Code — for example, asking Claude directly "what's open in the tracker right now?"
-
-These run over **stdio**, which is intentional: each deployment is local and personalized to one organization, not exposed over a network. There is no shared, multi-tenant server — each team runs its own private copy with its own credentials, locked to its own machine. This keeps every organization's Slack tokens, tracker data, and email credentials fully isolated from any other deployment, with no shared infrastructure or external attack surface.
-
-It's worth separating two things this project does:
-
-1. **The automation itself** (`scheduler.py`) — this is what your team actually experiences. It runs as a standalone background process and needs no MCP client at all. Anyone on the team interacts with it purely through Slack and email.
-2. **The MCP servers** — an additional, optional interactive layer for whoever is running the deployment, to query or control the system directly through a local AI assistant. Because they're stdio-based, they only work on the same machine where they're configured — there is no remote endpoint to connect to from elsewhere.
-
-If multi-user remote access to the MCP tools were needed in the future, the servers would need to move to an HTTP/SSE transport with proper authentication. That's a deliberate non-goal for this version: the design favors a locked-down, single-organization local deployment over a shared remote one.
+| Server | Tools |
+|---|---|
+| `slack-tools` | `read_messages`, `post_message`, `list_channels`, `create_channel`, `remove_channel_tool`, `list_intake_channels`, `sync_channels` |
+| `tracker-tools` | `add_entry`, `list_open_entries`, `update_status` |
+| `email-tools` | `send_summary_email` |
 
 ## Setup
 
-### Prerequisites
-
-- Python 3.10+
-- A Slack workspace where you can create an app/bot
-- A Google Cloud service account (for the Sheets tracker) or a Notion integration (for the Notion tracker)
-- A [Groq](https://groq.com) API key
-- A [Resend](https://resend.com) API key
-
-### 1. Install dependencies
-
+### 1. Clone & install
 ```bash
+git clone https://github.com/your-username/inbox-to-action.git
+cd inbox-to-action
 python -m venv venv
-venv\Scripts\activate          # Windows
-# source venv/bin/activate     # macOS/Linux
+venv\Scripts\activate        # Windows
 pip install -r requirements.txt
 ```
 
-### 2. Configure credentials
-
+### 2. Configure secrets
 ```bash
-copy .env.example .env                  # Windows
-# cp .env.example .env                  # macOS/Linux
+copy .env.example .env
+# Fill in your API keys in .env
+```
+
+### 3. Configure settings
+```bash
 copy config.example.yaml config.yaml
+# Edit config.yaml with your channel names and email recipients
 ```
 
-Fill in `.env` with your Slack bot token, Google service account path / Sheet ID (or Notion credentials), Groq API key, and Resend API key. Fill in `config.yaml` with your tracker backend choice and email recipient lists.
+### 4. Add Google service account
+- Create a service account at [console.cloud.google.com](https://console.cloud.google.com)
+- Enable Google Sheets API + Google Drive API
+- Download the JSON key → save as `service_account.json` in project root
+- Share your Google Sheet with the service account email as Editor
 
-`.env`, `config.yaml`, and `service_account.json` are gitignored — never commit real credentials.
+### 5. API Keys needed
 
-### 3. Set up Slack
+| Service | Where to get it |
+|---|---|
+| Groq | [console.groq.com](https://console.groq.com) → API Keys |
+| Slack Bot Token | [api.slack.com/apps](https://api.slack.com/apps) → OAuth & Permissions |
+| Google Sheets | Service account JSON (see above) |
+| SMTP (email) | Gmail App Password — myaccount.google.com → Security → App Passwords (or any other SMTP provider) |
+| Telegram | [@BotFather](https://t.me/botfather) → /newbot |
+| Notion *(optional)* | [notion.so/my-integrations](https://notion.so/my-integrations) — needed only if using the Notion tracker backend or the standalone Notion tools |
+| Google Calendar *(optional)* | Uses the same service account as Google Sheets — share your calendar with the service account's `client_email` |
 
-- Create a Slack app, add a bot user, and install it to your workspace.
-- Required bot scopes: `channels:history`, `chat:write` (add `groups:history` if your requests channel is private).
-- Invite the bot to your requests channel and your updates channel.
-
-### 4. Set up the tracker
-
-**Google Sheets (default):**
-- Create a Sheet with columns: `id, title, category, source_text, status, urgent, created_at`.
-- Create a Google Cloud service account, download its JSON key as `service_account.json`, and share the Sheet with the service account's email address (Editor access).
-
-**Notion (alternative):**
-- Create a Notion integration and a database with properties: `Title`, `Category`, `Source Text`, `Status`, `Urgent`, `Created At`.
-- Share the database with your integration.
-- Set `tracker.backend: "notion"` in `config.yaml`.
-
-### 5. Run
-
-```bash
-python scheduler.py
+### 6. Slack Bot Scopes required
+```
+channels:history   channels:read   channels:manage
+channels:join      chat:write      groups:history   groups:read
 ```
 
-This runs continuously: hourly intake on the hour, daily overview at the configured time, and weekly digest on the configured day. Each job is independently wrapped in error handling, so a failure in one never stops the others from running on schedule.
+## Usage
 
-To run a single job manually for testing:
-
+### Run the pipeline manually
 ```bash
+# Process new Slack messages
 python -m src.orchestrators.hourly_intake
+
+# Send daily summary (Slack + Email + Telegram)
 python -m src.orchestrators.daily_overview
+
+# Send weekly digest (Slack + Email + Telegram)
 python -m src.orchestrators.weekly_digest
 ```
 
-### 6. (Optional) Use the MCP servers locally
+### Or run everything on schedule
+```bash
+python scheduler.py
+```
+Runs hourly intake every hour, daily overview at the configured time
+(default 18:00), and the weekly digest on the configured weekday
+(default Monday 09:00). See `.env` for `DAILY_SUMMARY_TIME`,
+`WEEKLY_SUMMARY_DAY`, `WEEKLY_SUMMARY_TIME`.
 
-To query the tracker, Slack, or email tools interactively through Claude Desktop or Claude Code, add the servers to your MCP client's config. On Windows, Claude Desktop's config file is at `%APPDATA%\Claude\claude_desktop_config.json`.
+### Manage Slack channels
+```bash
+# Create a new channel and auto-register it for intake
+python -m src.utils.channel_manager create feature-requests
 
-Point `command` at the Python interpreter **inside this project's venv**, not a global `python` — Claude Desktop launches these as subprocesses without the venv activated, so a global interpreter won't have `mcp`, `slack_sdk`, `gspread`, etc. installed. Example (adjust the path to wherever you cloned the project):
+# List all registered intake channels
+python -m src.utils.channel_manager list
 
+# Remove a channel (archives in Slack + unregisters from config.yaml)
+python -m src.utils.channel_manager remove feature-requests
+
+# Sync config.yaml with Slack (auto-join missing channels)
+python -m src.utils.channel_manager sync
+```
+
+### Wire into Claude Desktop
+Add to `claude_desktop_config.json`:
 ```json
 {
   "mcpServers": {
-    "tracker-tools": {
-      "command": "D:\\MCP_Automation\\venv\\Scripts\\python.exe",
-      "args": ["D:\\MCP_Automation\\src\\mcp_servers\\tracker_server.py"]
-    },
-    "slack-tools": {
-      "command": "D:\\MCP_Automation\\venv\\Scripts\\python.exe",
-      "args": ["D:\\MCP_Automation\\src\\mcp_servers\\slack_server.py"]
-    },
-    "email-tools": {
-      "command": "D:\\MCP_Automation\\venv\\Scripts\\python.exe",
-      "args": ["D:\\MCP_Automation\\src\\mcp_servers\\email_server.py"]
+    "mcp-automation": {
+      "command": "python",
+      "args": ["D:/MCP_Automation/src/mcp_servers/unified_server.py"]
     }
   }
 }
 ```
 
-On macOS/Linux, point `command` at `venv/bin/python` instead, using forward slashes.
-
-No `cwd` is needed — each server script resolves the project root itself (`sys.path.insert(0, ...parents[2])`), and configuration is loaded relative to that root, so credentials in `.env`/`config.yaml` are found regardless of where the process is launched from.
-
-After saving the config, fully quit and reopen Claude Desktop (not just close the window) for it to pick up the new servers. This only works locally, on the machine where the project and its credentials are set up — see the note above.
-
-## Testing the pipeline end to end
-
-A seed script is included to push a realistic batch of test messages through the full pipeline (classification, tracker logging, daily/weekly summaries) without manually typing into Slack:
-
-```bash
-python scripts/seed_test_messages.py
-python -m src.orchestrators.daily_overview
-python -m src.orchestrators.weekly_digest
+This single entry exposes all 16 tools (Slack, tracker, email, Notion,
+Calendar, Telegram). If you'd rather run smaller single-purpose servers
+instead, use the three separate entries below — they still work, but
+only cover Slack, tracker, and email (no Notion/Calendar/Telegram):
+```json
+{
+  "mcpServers": {
+    "slack-tools": {
+      "command": "python",
+      "args": ["D:/MCP_Automation/src/mcp_servers/slack_server.py"]
+    },
+    "tracker-tools": {
+      "command": "python",
+      "args": ["D:/MCP_Automation/src/mcp_servers/tracker_server.py"]
+    },
+    "email-tools": {
+      "command": "python",
+      "args": ["D:/MCP_Automation/src/mcp_servers/email_server.py"]
+    }
+  }
+}
 ```
 
-It includes a duplicate guard, so re-running it skips any message already logged. To reset the tracker to a clean state first:
+## Schedule with Windows Task Scheduler
 
-```bash
-python scripts/clear_tracker.py
+The simplest option is to schedule `scheduler.py` itself once — it runs all
+three jobs (hourly intake, daily overview, weekly digest) internally on
+the timings from `.env`:
+```
+Program: D:\MCP_Automation\venv\Scripts\python.exe
+Arguments: scheduler.py
+Start in: D:\MCP_Automation
+Trigger: At startup / At log on (it then runs continuously)
 ```
 
-This is a destructive operation and requires typing `yes` to confirm.
+Alternatively, schedule each job as its own separate Task Scheduler entry:
 
-## Stack
+Hourly intake every hour:
+```
+Program: D:\MCP_Automation\venv\Scripts\python.exe
+Arguments: -m src.orchestrators.hourly_intake
+Start in: D:\MCP_Automation
+```
 
-- **Language:** Python
-- **MCP SDK:** official `mcp` Python SDK
-- **LLM:** Groq (Llama 3.3 70B) for classification and summarization
-- **Slack:** Slack Web API
-- **Tracker:** Google Sheets API (`gspread`), with a Notion backend available behind the same interface
-- **Email:** Resend
-- **Scheduling:** `schedule` Python library
+Daily overview at 6 PM:
+```
+Program: D:\MCP_Automation\venv\Scripts\python.exe
+Arguments: -m src.orchestrators.daily_overview
+Trigger: Daily at 18:00
+Start in: D:\MCP_Automation
+```
 
-## What's next
+Weekly digest Monday at 9 AM:
+```
+Program: D:\MCP_Automation\venv\Scripts\python.exe
+Arguments: -m src.orchestrators.weekly_digest
+Trigger: Weekly, Monday at 09:00
+Start in: D:\MCP_Automation
+```
 
-- Multi-channel support (triage across several Slack channels)
-- Per-user email preferences (opt-in/out of daily vs. weekly digest)
-- HTML-formatted emails with color-coded categories
-- Basic access control for marking items resolved
-- HTTP/SSE transport for the MCP servers, if multi-user remote access becomes a requirement
+## Project Structure
+
+```
+MCP_Automation/
+├── src/
+│   ├── core/
+│   │   ├── config.py          # Central settings loader
+│   │   ├── slack_ops.py       # Slack Web API wrapper
+│   │   ├── llm_ops.py         # Groq classification + summary drafting
+│   │   ├── email_ops.py       # SMTP email sender
+│   │   ├── tracker.py         # Google Sheets / Notion tracker (swappable)
+│   │   ├── notion_ops.py      # Standalone Notion workspace tools
+│   │   ├── calendar_ops.py    # Google Calendar tools
+│   │   ├── telegram_ops.py    # Telegram bot messaging
+│   │   └── state.py           # Run state persistence (intake cursor)
+│   ├── mcp_servers/
+│   │   ├── unified_server.py  # MCP: mcp-automation (all 16 tools — recommended)
+│   │   ├── slack_server.py    # MCP: slack-tools (standalone)
+│   │   ├── tracker_server.py  # MCP: tracker-tools (standalone)
+│   │   └── email_server.py    # MCP: email-tools (standalone)
+│   ├── orchestrators/
+│   │   ├── hourly_intake.py   # Hourly pipeline runner + urgent Telegram alert
+│   │   ├── daily_overview.py  # Daily summary → Slack + Email + Telegram
+│   │   └── weekly_digest.py   # Weekly digest → Slack + Email + Telegram
+│   └── utils/
+│       ├── channel_manager.py # Slack channel lifecycle manager
+│       └── logging_setup.py   # Rotating file + console logger
+├── scripts/
+│   ├── seed_test_messages.py # Seeds 20 realistic test messages end-to-end
+│   ├── check_urgency.py      # Regression check for the urgency classifier
+│   └── clear_tracker.py      # Destructive admin script — wipes the tracker
+├── scheduler.py             # Runs all three jobs on schedule, in one process
+├── .env.example             # Secret keys template
+├── config.example.yaml      # Settings template
+├── requirements.txt
+└── README.md
+```
+
+## Built With
+
+- [Groq](https://groq.com) — LLaMA 3.3-70B for message classification and summary drafting
+- [Slack SDK](https://slack.dev/python-slack-sdk/) — Slack Web API
+- [FastMCP](https://github.com/jlowin/fastmcp) — MCP server framework
+- [gspread](https://docs.gspread.org/) — Google Sheets tracker backend
+- [notion-client](https://github.com/ramnes/notion-sdk-py) — Notion tracker backend + standalone Notion tools
+- [google-api-python-client](https://github.com/googleapis/google-api-python-client) — Google Calendar
+- SMTP (`smtplib`, standard library) — email delivery, no third-party email account needed
+- [httpx](https://www.python-httpx.org/) — Telegram Bot API client
+- `schedule` — job scheduling

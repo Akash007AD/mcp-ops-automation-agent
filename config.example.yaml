@@ -1,26 +1,27 @@
-# Copy this file to config.yaml and fill in your values.
-# Non-secret settings only — credentials and tokens live in .env instead.
+slack:
+  # Channels the bot reads requests from.
+  # Add new channels using: python -m src.utils.channel_manager create <name>
+  # The bot will be auto-joined and the channel registered here automatically.
+  intake_channels:
+    - new-channel
+  # Channel where the bot posts daily/weekly summaries.
+  updates_channel: new-channel
 
 tracker:
-  # "sheets" or "notion" — must match credentials filled in .env.
+  # "sheets" or "notion"
   backend: "sheets"
 
 email:
-  from_address: "your_gmail@gmail.com"   # must match SMTP_USERNAME in .env
+  from_address: "your@gmail.com"
   from_name: "Team Ops Agent"
   recipients:
-    # Recipients are config-driven — the agent cannot add new ones.
     daily:
-      - "you@example.com"
+      - "your@gmail.com"
     weekly:
-      - "you@example.com"
-      - "manager@example.com"
+      - "your@gmail.com"
     alerts:
-      # Gets Telegram + email for every urgent item immediately.
-      - "you@example.com"
-    external:
-      # External stakeholders / clients. Leave empty [] if unused.
-      []
+      - "your@gmail.com"
+    external: []
   subject_templates:
     daily: "Daily Request Overview — {date}"
     weekly: "Weekly Digest — {week_range}"
