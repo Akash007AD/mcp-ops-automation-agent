@@ -1,21 +1,27 @@
-# Copy this file to config.yaml and fill in your own values.
+# Copy this file to config.yaml and fill in your values.
 # Non-secret settings only — credentials and tokens live in .env instead.
 
 tracker:
-  # "sheets" or "notion" — must match the credentials you filled in .env.
+  # "sheets" or "notion" — must match credentials filled in .env.
   backend: "sheets"
 
 email:
-  from_address: "onboarding@resend.dev"
+  from_address: "your_gmail@gmail.com"   # must match SMTP_USERNAME in .env
   from_name: "Team Ops Agent"
   recipients:
-    # Recipients are static and config-driven by design — the agent cannot
-    # discover or add new recipients on its own (see 02_ARCHITECTURE.md).
+    # Recipients are config-driven — the agent cannot add new ones.
     daily:
-      - "manager@yourcompany.com"
+      - "you@example.com"
     weekly:
-      - "manager@yourcompany.com"
-      - "hr@yourcompany.com"
+      - "you@example.com"
+      - "manager@example.com"
+    alerts:
+      # Gets Telegram + email for every urgent item immediately.
+      - "you@example.com"
+    external:
+      # External stakeholders / clients. Leave empty [] if unused.
+      []
   subject_templates:
     daily: "Daily Request Overview — {date}"
     weekly: "Weekly Digest — {week_range}"
+    alert: "⚠️ Urgent Alert — {date}"

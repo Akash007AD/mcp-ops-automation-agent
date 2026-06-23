@@ -2,11 +2,9 @@
 Weekly digest job (runs Monday at settings.weekly_summary_time, default 9 AM).
 
 list_open_entries(since=7_days_ago) -> Groq drafts digest ->
-post_message() + send_summary_email(to=weekly_recipients).
+post_message() + send_summary_email() + telegram_send_message()
 
-Mirrors daily_overview.py: failures in one delivery channel (Slack vs email)
-do not block the other — both are attempted independently, per
-03_BUILD_PLAN.md Day 10.
+All three delivery channels are attempted independently.
 
 Can also be run standalone for manual testing:
     python -m src.orchestrators.weekly_digest
@@ -16,7 +14,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
-from src.core import slack_ops
+from src.core import slack_ops, telegram_ops
 from src.core.config import settings
 from src.core.email_ops import send_summary_email
 from src.core.llm_ops import draft_weekly_digest
@@ -28,24 +26,25 @@ logger = get_logger("weekly_digest")
 
 def _seven_days_ago_iso() -> str:
     cutoff = datetime.now(timezone.utc) - timedelta(days=7)
-    # Snap to midnight so the window is always full days, not a rolling 168 hrs.
     cutoff = cutoff.replace(hour=0, minute=0, second=0, microsecond=0)
     return cutoff.isoformat()
 
 
 def _week_range_label() -> str:
-    """Human-readable range for the email subject, e.g. 'Jun 13 - Jun 19'."""
     end = datetime.now(timezone.utc).date()
     start = end - timedelta(days=6)
-    # strftime '%-d' (no zero-pad) is Linux only; use %d on Windows and strip manually.
-    def _fmt(d: object) -> str:
+    def _fmt(d) -> str:
         return f"{d.strftime('%b')} {d.day}"
-
     return f"{_fmt(start)} - {_fmt(end)}"
 
 
 def run() -> dict:
-    result = {"entries": 0, "slack_posted": False, "email_sent": False}
+    result = {
+        "entries": 0,
+        "slack_posted": False,
+        "email_sent": False,
+        "telegram_sent": False,
+    }
 
     tracker = get_tracker()
     since = _seven_days_ago_iso()
@@ -65,7 +64,7 @@ def run() -> dict:
         logger.exception("Failed to draft weekly digest via LLM")
         return result
 
-    # Slack post — failure here does not block email delivery.
+    # ── Slack ─────────────────────────────────────────────────────────────────
     try:
         slack_ops.post_message(body)
         result["slack_posted"] = True
@@ -73,22 +72,33 @@ def run() -> dict:
     except Exception:
         logger.exception("Failed to post weekly digest to Slack")
 
-    # Email — failure here does not affect the already-attempted Slack post.
+    # ── Email (SMTP — multi-recipient) ────────────────────────────────────────
     try:
         recipients = settings.email_recipients_weekly
         if not recipients:
-            logger.warning(
-                "No weekly email recipients configured in config.yaml — skipping email"
-            )
+            logger.warning("No weekly email recipients in config.yaml — skipping email")
         else:
-            subject = settings.subject_template_weekly.format(
-                week_range=_week_range_label()
-            )
+            week_range = _week_range_label()
+            subject = settings.subject_template_weekly.format(week_range=week_range)
             send_summary_email(to=recipients, subject=subject, body=body)
             result["email_sent"] = True
             logger.info("Sent weekly digest email to %s", recipients)
     except Exception:
         logger.exception("Failed to send weekly digest email")
+
+    # ── Telegram ──────────────────────────────────────────────────────────────
+    try:
+        if not settings.telegram_bot_token or not settings.telegram_chat_id:
+            logger.info("Telegram not configured — skipping")
+        else:
+            tg_text = telegram_ops.format_summary_for_telegram(
+                f"📊 Weekly Digest — {_week_range_label()}", body
+            )
+            telegram_ops.send_message(tg_text)
+            result["telegram_sent"] = True
+            logger.info("Sent weekly digest to Telegram")
+    except Exception:
+        logger.exception("Failed to send weekly digest to Telegram")
 
     logger.info("Weekly digest done: %s", result)
     return result
