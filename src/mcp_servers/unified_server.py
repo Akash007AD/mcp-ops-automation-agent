@@ -35,6 +35,7 @@ from mcp.server.fastmcp import FastMCP
 
 from src.core import slack_ops, email_ops, notion_ops, calendar_ops, telegram_ops
 from src.core.tracker import get_tracker
+from src.utils.channel_manager import register_mcp_tools
 
 mcp = FastMCP("mcp-automation")
 
@@ -76,6 +77,12 @@ def list_channels() -> list[dict]:
     discovering which channels are available before reading or posting.
     """
     return slack_ops.list_channels()
+
+
+# Channel lifecycle tools (create_channel, remove_channel_tool,
+# list_intake_channels, sync_channels) — registered from channel_manager.py
+# so this server matches the same tool surface as slack_server.py.
+register_mcp_tools(mcp)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
