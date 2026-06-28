@@ -20,19 +20,30 @@ Slack (multiple intake channels)
 
 ## MCP Servers
 
-**Recommended: run everything through the unified server.**
+**Use `unified_server.py` — this is the only server actually wired into Claude
+Desktop in this project** (see the `claude_desktop_config.json` snippet in
+[Usage](#usage) below). It exposes all 16 tools across Slack, tracker, email,
+Notion, Calendar, and Telegram from a single process.
 
 | Server | Tools |
 |---|---|
-| `mcp-automation` (unified — `unified_server.py`) | Slack: `read_messages`, `post_message`, `list_channels` · Tracker: `add_entry`, `list_open_entries`, `update_status` · Email: `send_summary_email` · Notion: `notion_create_page`, `notion_query_database`, `notion_update_page` · Calendar: `calendar_create_event`, `calendar_list_events` · Telegram: `telegram_send_message`, `telegram_send_to_group` |
+| `mcp-automation` (unified — `unified_server.py`) ✅ **active** | Slack: `read_messages`, `post_message`, `list_channels` · Tracker: `add_entry`, `list_open_entries`, `update_status` · Email: `send_summary_email` · Notion: `notion_create_page`, `notion_query_database`, `notion_update_page` · Calendar: `calendar_create_event`, `calendar_list_events` · Telegram: `telegram_send_message`, `telegram_send_to_group` |
 
-The three single-purpose servers below still work standalone if you'd rather run a smaller process per integration:
+<details>
+<summary>Legacy / optional: three single-purpose servers (not currently wired up)</summary>
+
+These still work standalone if you'd rather run a smaller process per
+integration, but they only cover Slack, tracker, and email — no
+Notion/Calendar/Telegram. They're kept in the codebase for that use case,
+not because the unified server is missing anything.
 
 | Server | Tools |
 |---|---|
 | `slack-tools` | `read_messages`, `post_message`, `list_channels`, `create_channel`, `remove_channel_tool`, `list_intake_channels`, `sync_channels` |
 | `tracker-tools` | `add_entry`, `list_open_entries`, `update_status` |
 | `email-tools` | `send_summary_email` |
+
+</details>
 
 ## Setup
 
@@ -74,6 +85,12 @@ copy config.example.yaml config.yaml
 | Telegram | [@BotFather](https://t.me/botfather) → /newbot |
 | Notion *(optional)* | [notion.so/my-integrations](https://notion.so/my-integrations) — needed only if using the Notion tracker backend or the standalone Notion tools |
 | Google Calendar *(optional)* | Uses the same service account as Google Sheets — share your calendar with the service account's `client_email` |
+
+> **Note on urgent alerts:** urgent items today trigger an immediate
+> **Telegram** alert only (`hourly_intake.py` → `_send_urgent_alert`). The
+> `email.recipients.alerts` list in `config.yaml` is defined but not called
+> automatically by any orchestrator — wire up `send_alert_email()` in
+> `email_ops.py` if you also want urgent items emailed.
 
 ### 6. Slack Bot Scopes required
 ```
@@ -120,7 +137,8 @@ python -m src.utils.channel_manager sync
 ```
 
 ### Wire into Claude Desktop
-Add to `claude_desktop_config.json`:
+**This is the config actually in use for this project.** Add to
+`claude_desktop_config.json`:
 ```json
 {
   "mcpServers": {
@@ -131,11 +149,15 @@ Add to `claude_desktop_config.json`:
   }
 }
 ```
-
 This single entry exposes all 16 tools (Slack, tracker, email, Notion,
-Calendar, Telegram). If you'd rather run smaller single-purpose servers
-instead, use the three separate entries below — they still work, but
-only cover Slack, tracker, and email (no Notion/Calendar/Telegram):
+Calendar, Telegram).
+
+<details>
+<summary>Legacy / optional: three smaller single-purpose servers instead</summary>
+
+Not used in this project's actual setup, but still work if you'd rather run
+a smaller process per integration. Covers only Slack, tracker, and email —
+no Notion/Calendar/Telegram:
 ```json
 {
   "mcpServers": {
@@ -154,6 +176,8 @@ only cover Slack, tracker, and email (no Notion/Calendar/Telegram):
   }
 }
 ```
+
+</details>
 
 ## Schedule with Windows Task Scheduler
 
